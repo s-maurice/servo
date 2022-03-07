@@ -4,7 +4,7 @@
 
 use crate::font::{FontFamilyDescriptor, FontFamilyName, FontSearchScope};
 use crate::font_context::FontSource;
-use crate::font_template::{FontTemplate, FontTemplateDescriptor};
+use crate::font_template::{FontTemplate, FontTemplateDescriptor, SerializedFontTemplate};
 use crate::platform::font_context::FontContextHandle;
 use crate::platform::font_list::for_each_available_family;
 use crate::platform::font_list::for_each_variation;
@@ -123,7 +123,7 @@ pub enum Command {
 /// Reply messages sent from the font cache thread to the FontContext caller.
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Reply {
-    GetFontTemplateReply(Option<FontTemplateInfo>),
+    GetFontTemplateReply(Option<SerializedFontTemplate>),
 }
 
 /// The font cache thread itself. It maintains a list of reference counted
@@ -387,9 +387,11 @@ impl FontCache {
         }
     }
 
-    fn get_font_template_info(&mut self, template: Arc<FontTemplateData>) -> FontTemplateInfo {
+    fn get_font_template_info(&mut self, template: Arc<FontTemplateData>) -> SerializedFontTemplate {
         let webrender_api = &self.webrender_api;
         let webrender_fonts = &mut self.webrender_fonts;
+
+        let (tx, rx) = ipc::bytes_channel().unwrap();
 
         let font_key = *webrender_fonts
             .entry(template.identifier.clone())
@@ -402,17 +404,16 @@ impl FontCache {
                 webrender_api.add_font(font)
             });
 
-        FontTemplateInfo {
-            font_template: template,
-            font_key: font_key,
-        }
+        tx.send(&*template.bytes());
+
+        SerializedFontTemplate::new(template.identifier.clone(), font_key, rx)
     }
 
     fn find_font_template(
         &mut self,
         template_descriptor: &FontTemplateDescriptor,
         family_descriptor: &FontFamilyDescriptor,
-    ) -> Option<FontTemplateInfo> {
+    ) -> Option<SerializedFontTemplate> {
         match family_descriptor.scope {
             FontSearchScope::Any => self
                 .find_font_in_web_family(&template_descriptor, &family_descriptor.name)
@@ -545,7 +546,18 @@ impl FontSource for FontCacheThread {
         }
 
         match reply.unwrap() {
-            Reply::GetFontTemplateReply(data) => data,
+            Reply::GetFontTemplateReply(data) => {
+                match data {
+                    None => {None}
+                    Some(data) => {
+                        let font_template_data = data.to_font_template_data();
+                        Some(FontTemplateInfo {
+                            font_template: Arc::new(font_template_data),
+                            font_key: data.font_key(),
+                        })
+                    }
+                }
+            }
         }
     }
 }

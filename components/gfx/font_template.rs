@@ -229,3 +229,29 @@ impl FontTemplate {
         Ok(template_data)
     }
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct SerializedFontTemplate {
+    identifier: Atom,
+    font_key: webrender_api::FontKey,
+    bytes_receiver: ipc_channel::ipc::IpcBytesReceiver,
+}
+
+impl SerializedFontTemplate {
+    pub fn new(identifier: Atom, font_key: webrender_api::FontKey, bytes_receiver: ipc_channel::ipc::IpcBytesReceiver) -> Self {
+        Self {
+            identifier,
+            font_key,
+            bytes_receiver,
+        }
+    }
+
+    pub fn to_font_template_data(&self) -> FontTemplateData {
+        let font_data = self.bytes_receiver.recv().ok();
+        FontTemplateData::new(self.identifier.clone(), font_data).unwrap()
+    }
+
+    pub fn font_key(&self) -> webrender_api::FontKey {
+        self.font_key
+    }
+}
